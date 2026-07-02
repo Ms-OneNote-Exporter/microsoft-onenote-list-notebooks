@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+
+# Test coverage
+coverage/
+
+# Temp files
+tmp/
+*.html
+debug_*.html
+
+# Diagnostic dumps (debug output, not source)
+diag-dumps/
+
+# OS
+.DS_Store
+Thumbs.db

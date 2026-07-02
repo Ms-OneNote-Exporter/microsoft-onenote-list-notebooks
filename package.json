@@ -1,0 +1,33 @@
+{
+  "name": "microsoft-onenote-list-notebook-playwright",
+  "version": "1.0.0",
+  "description": "List Microsoft OneNote notebooks via Playwright — extracted from MSOneNote Exporter",
+  "main": "src/index.js",
+  "bin": {
+    "onenote-list": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "list": "node src/index.js list",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "keywords": [
+    "microsoft",
+    "onenote",
+    "playwright",
+    "list-notebooks",
+    "webauth"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^14.0.3",
+    "fs-extra": "^11.3.3",
+    "playwright": "^1.58.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
