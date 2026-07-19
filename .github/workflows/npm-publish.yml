@@ -10,6 +10,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    environment: MYENV_SECRETS
 
     steps:
       - name: Checkout repository
