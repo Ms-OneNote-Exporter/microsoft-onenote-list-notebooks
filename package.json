@@ -1,10 +1,10 @@
 {
   "name": "microsoft-onenote-list-notebook-playwright",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "List Microsoft OneNote notebooks via Playwright — extracted from MSOneNote Exporter",
   "main": "src/index.js",
   "bin": {
-    "onenote-list": "./src/index.js"
+    "microsoft-onenote-list": "./src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",

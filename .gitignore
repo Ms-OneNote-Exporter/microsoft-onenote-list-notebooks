@@ -19,3 +19,6 @@ diag-dumps/
 # OS
 .DS_Store
 Thumbs.db
+QWEN.md
+.qwen
+
