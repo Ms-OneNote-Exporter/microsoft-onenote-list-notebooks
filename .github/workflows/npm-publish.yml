@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
-          token: ''  # Empty token to enable OIDC trusted publishing
+          always-auth: false
 
       - run: npm ci
 
