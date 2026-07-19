@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Lists available OneNote notebooks by scraping the OneNote web interface.
+ * @author phptr,enoola,msout
+ * @copyright 2026 phptr,enoola,msout
+ */
 const { chromium } = require('playwright');
 const logger = require('./utils/logger');
 const { getAuthenticatedContextWithFile } = require('./auth-context');

@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Authentication context helper for the OneNote notebook listing CLI tool.
+ * @author phptr,enoola,msout
+ * @copyright 2026 phptr,enoola,msout
+ */
 const { chromium } = require('playwright');
 const fs = require('fs-extra');
 

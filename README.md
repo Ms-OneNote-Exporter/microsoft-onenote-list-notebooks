@@ -51,11 +51,11 @@ Each notebook object contains:
 Authentication state must be obtained separately using the `microsoft-webauth` module:
 
 ```bash
-# First, authenticate
-webauth login --email your@email.com --password yourpassword
+# First, authenticate (https://github.com/Ms-OneNote-Exporter/microsoft-webauth or https://www.npmjs.com/package/@msout/microsoft-webauth)
+microsoft-webauth login --email your@email.com --password yourpassword
 
 # Then list notebooks
-onenote-list list --auth-file /path/to/auth.json
+microsoft-onenote-list-notebooks list --auth-file /path/to/auth.json
 ```
 
 ## Project Structure
