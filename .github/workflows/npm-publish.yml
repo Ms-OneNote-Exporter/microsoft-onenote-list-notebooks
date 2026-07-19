@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,9 +26,6 @@ jobs:
 
       - name: Run tests
         run: npm test
-
-      - name: Build package
-        run: npm pack
 
       - name: Publish to npm
         run: npm publish --provenance --access public
