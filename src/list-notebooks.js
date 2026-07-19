@@ -97,20 +97,21 @@ async function listNotebooks(options = {}) {
 
         await dismissMcasInterstitial(page);
 
-        // Wait for the notebook table to appear.
-        // The new onenote.cloud.microsoft/notebooks page renders notebooks as a plain
-        // <table> where each notebook row (<tr>) contains in its first <td>:
-        //   <img alt="Classic Notebook"> <span>Notebook Name</span>
-        // We scope to 'tr img[...]' to exclude the sidebar nav item (which also has
-        // this img but outside a table row and produces a false "Notebooks" entry).
-        // We use state:'attached' because the imgs can be present but hidden.
-        logger.info('Waiting for notebook list to render...');
+        // Wait for either the standard notebook table or the "Show all notebooks" link to appear.
+        logger.info('Waiting for notebook list or "Show all notebooks" link...');
         const NOTEBOOK_IMG_SELECTOR = 'tr img[alt="Classic Notebook"]';
+        const SHOW_ALL_SELECTOR = 'a:has-text("Show all notebooks")';
+        
+        let hasNotebooks = false;
+        let showAllVisible = false;
+
         try {
-            await page.waitForSelector(NOTEBOOK_IMG_SELECTOR, { state: 'attached', timeout: 60000 });
-            logger.success('Notebook list detected in DOM.');
+            await Promise.any([
+                page.waitForSelector(NOTEBOOK_IMG_SELECTOR, { state: 'attached', timeout: 30000 }).then(() => { hasNotebooks = true; }),
+                page.waitForSelector(SHOW_ALL_SELECTOR, { state: 'visible', timeout: 30000 }).then(() => { showAllVisible = true; })
+            ]);
         } catch (e) {
-            logger.warn(`Notebook img selector not found within timeout: ${e.message}`);
+            logger.warn(`Neither notebook list nor "Show all notebooks" found within timeout: ${e.message}`);
         }
 
         if (options.dodump) {
@@ -122,51 +123,175 @@ async function listNotebooks(options = {}) {
         }
 
         let notebooks = [];
-        const maxRetries = 5;
 
-        for (let i = 0; i < maxRetries; i++) {
-            logger.debug(`Attempt ${i + 1}/${maxRetries} to scrape notebook list...`);
+        if (hasNotebooks) {
+            logger.info('Notebook list detected on main page. Scraping...');
+            const maxRetries = 5;
+            for (let i = 0; i < maxRetries; i++) {
+                logger.debug(`Attempt ${i + 1}/${maxRetries} to scrape notebook list...`);
 
-            notebooks = await page.evaluate((imgSelector) => {
-                // New page structure (onenote.cloud.microsoft/notebooks):
-                // A <table> where each <tr> (notebook row) contains in its first <td>:
-                //   <div>
-                //     <img alt="Classic Notebook">
-                //     <span>Notebook Name</span>
-                //   </div>
-                // Selector is scoped to 'tr img[...]' to exclude the sidebar nav
-                // item (same img alt, but not inside a <tr>) which would otherwise
-                // produce a false "Notebooks" entry at position #1.
-                const imgs = Array.from(document.querySelectorAll(imgSelector));
+                notebooks = await page.evaluate((imgSelector) => {
+                    const imgs = Array.from(document.querySelectorAll(imgSelector));
 
-                return imgs.map((img, idx) => {
-                    // The span immediately following the img holds the name
-                    const nameSpan = img.nextElementSibling;
-                    if (!nameSpan) return null;
+                    return imgs.map((img, idx) => {
+                        const nameSpan = img.nextElementSibling;
+                        if (!nameSpan) return null;
 
-                    const name = nameSpan.innerText.trim();
+                        const name = nameSpan.innerText.trim();
+                        if (!name) return null;
+
+                        const tr = img.closest('tr');
+                        const trIndex = tr ? tr.rowIndex : idx;
+
+                        return {
+                            name,
+                            url: 'click-to-open',
+                            id: `notebook-row-${trIndex}`
+                        };
+                    }).filter(n => n && n.name);
+                }, NOTEBOOK_IMG_SELECTOR);
+
+                if (notebooks.length > 0) {
+                    logger.success(`Found ${notebooks.length} notebooks!`);
+                    break;
+                }
+
+                if (i < maxRetries - 1) {
+                    logger.debug('No notebooks found yet, waiting 3 seconds...');
+                    await page.waitForTimeout(3000);
+                }
+            }
+        } else if (showAllVisible) {
+            logger.info('No notebooks on main page, but "Show all notebooks" link is visible. Redirecting to OneDrive...');
+            
+            const showAllLink = page.locator(SHOW_ALL_SELECTOR);
+            let targetPage = page;
+            const popupPromise = context.waitForEvent('page', { timeout: 15000 }).catch(() => null);
+
+            await showAllLink.click();
+
+            const popupPage = await popupPromise;
+            if (popupPage) {
+                logger.success('Opened OneDrive in a new tab.');
+                targetPage = popupPage;
+            } else {
+                logger.info('OneDrive did not open in a new tab, using current tab.');
+            }
+
+            // Handle potential "Stay signed in?" screen
+            logger.info('Checking for potential "Stay signed in?" screen...');
+            const yesBtn = targetPage.locator('#idSIButton9, input[type="submit"][value="Yes"], input[value="Yes"], button:has-text("Yes")');
+            try {
+                await yesBtn.waitFor({ state: 'visible', timeout: 10000 });
+                logger.info('Detected "Stay signed in?" screen. Clicking "Yes"...');
+                await yesBtn.click();
+                await targetPage.waitForNavigation({ waitUntil: 'load', timeout: 20000 }).catch(() => {});
+            } catch (e) {
+                logger.info('No "Stay signed in?" screen detected within timeout.');
+            }
+
+            // Wait for onedrive.live.com to load
+            logger.info('Waiting for onedrive.live.com to load...');
+            await targetPage.waitForURL(/onedrive\.live\.com/, { timeout: 30000 });
+            await targetPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+
+            // Wait for either the ransomware modal or the OneNote pill to become visible
+            logger.info('Waiting for page elements to render on OneDrive...');
+            const ransomwareText = targetPage.getByText('Ransomware can lock your files', { exact: false });
+            const onenotePill = targetPage.locator('button:has-text("OneNote"), [role="tab"]:has-text("OneNote"), [role="button"]:has-text("OneNote")').first();
+            
+            try {
+                const eventType = await Promise.any([
+                    ransomwareText.waitFor({ state: 'visible', timeout: 15000 }).then(() => 'ransomware'),
+                    onenotePill.waitFor({ state: 'visible', timeout: 15000 }).then(() => 'pill')
+                ]);
+
+                if (eventType === 'ransomware') {
+                    logger.info('Detected Ransomware warning modal. Closing it...');
+                    const closeBtn = targetPage.locator('button[aria-label="Close"], button[title="Close"], .ms-Modal-closeButton');
+                    if (await closeBtn.isVisible()) {
+                        await closeBtn.click();
+                        logger.success('Ransomware warning modal closed.');
+                        await targetPage.waitForTimeout(2000); // Wait for close transition
+                    }
+                    // Now wait for the filter pill
+                    await onenotePill.waitFor({ state: 'visible', timeout: 10000 });
+                }
+            } catch (e) {
+                logger.warn(`OneDrive elements rendering wait finished or timed out: ${e.message}`);
+            }
+
+            // Select "OneNote" pill/filter
+            logger.info('Filtering by "OneNote" to display notebooks...');
+            if (await onenotePill.isVisible().catch(() => false)) {
+                await onenotePill.click();
+                // Wait for list to filter
+                await targetPage.waitForTimeout(3000);
+            } else {
+                logger.warn('"OneNote" filter pill not found on OneDrive.');
+            }
+
+            logger.info('Waiting for notebooks list to render on OneDrive...');
+            const nameBtnSelector = 'button[role="link"].nameCellTopContrast, button[role="link"], button[class*="nameCellTop"]';
+            try {
+                await targetPage.waitForSelector(nameBtnSelector, { state: 'attached', timeout: 15000 });
+            } catch (e) {
+                logger.warn(`No notebook rows detected within timeout: ${e.message}`);
+            }
+
+            if (options.dodump) {
+                const dumpDir = await logger.getDumpDir();
+                const displayPath = logger.getDumpDisplayPath();
+                logger.warn(`Dumping OneDrive page content to ${displayPath}/debug_onedrive_dump.html...`);
+                const content = await targetPage.content();
+                await fs.writeFile(path.join(dumpDir, 'debug_onedrive_dump.html'), content);
+            }
+
+            logger.info('Scraping notebooks from OneDrive list...');
+            notebooks = await targetPage.evaluate(() => {
+                const rows = Array.from(document.querySelectorAll('[role="row"]'));
+                return rows.map((row, idx) => {
+                    const nameBtn = row.querySelector('button[role="link"], button.nameCellTopContrast, button[class*="nameCellTop"]');
+                    if (!nameBtn) return null;
+                    const name = nameBtn.innerText.trim();
                     if (!name) return null;
-
-                    // Use the row index as the id (no data-automationid on new page)
-                    const tr = img.closest('tr');
-                    const trIndex = tr ? tr.rowIndex : idx;
-
                     return {
                         name,
                         url: 'click-to-open',
-                        id: `notebook-row-${trIndex}`
+                        id: `notebook-row-${idx}`
                     };
                 }).filter(n => n && n.name);
-            }, NOTEBOOK_IMG_SELECTOR);
+            });
 
-            if (notebooks.length > 0) {
-                logger.success(`Found ${notebooks.length} notebooks!`);
-                break;
-            }
+            logger.success(`Found ${notebooks.length} notebooks on OneDrive!`);
+        } else {
+            logger.warn('Neither notebook list nor "Show all notebooks" link was detected. Trying fallback scrape on main page...');
+            const maxRetries = 3;
+            for (let i = 0; i < maxRetries; i++) {
+                notebooks = await page.evaluate((imgSelector) => {
+                    const imgs = Array.from(document.querySelectorAll(imgSelector));
+                    return imgs.map((img, idx) => {
+                        const nameSpan = img.nextElementSibling;
+                        if (!nameSpan) return null;
+                        const name = nameSpan.innerText.trim();
+                        if (!name) return null;
+                        const tr = img.closest('tr');
+                        const trIndex = tr ? tr.rowIndex : idx;
+                        return {
+                            name,
+                            url: 'click-to-open',
+                            id: `notebook-row-${trIndex}`
+                        };
+                    }).filter(n => n && n.name);
+                }, NOTEBOOK_IMG_SELECTOR);
 
-            if (i < maxRetries - 1) {
-                logger.debug('No notebooks found yet, waiting 3 seconds...');
-                await page.waitForTimeout(3000);
+                if (notebooks.length > 0) {
+                    logger.success(`Found ${notebooks.length} notebooks!`);
+                    break;
+                }
+                if (i < maxRetries - 1) {
+                    await page.waitForTimeout(3000);
+                }
             }
         }
 
