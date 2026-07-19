@@ -1,4 +1,9 @@
 /**
+ * @fileoverview Diagnostic script for OneNote notebook listing CLI tool.
+ * @author phptr,enoola,msout
+ * @copyright 2026 phptr,enoola,msout
+ */
+/**
  * diagnose-new-page.js
  * 
  * Diagnostic script: opens onenote.cloud.microsoft/notebooks with auth,

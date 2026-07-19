@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Logger utility for the OneNote notebook listing CLI tool.
+ * @author phptr,enoola,msout
+ * @copyright 2026 phptr,enoola,msout
+ */
 const chalk = require('chalk');
 const fs = require('fs-extra');
 const path = require('path');
