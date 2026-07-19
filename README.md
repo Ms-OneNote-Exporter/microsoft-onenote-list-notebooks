@@ -4,6 +4,15 @@ List Microsoft OneNote notebooks via Playwright — extracted from [MSOneNote Ex
 
 This is a standalone CLI tool for listing OneNote notebooks using Playwright with authentication state loaded from a JSON file.
 
+## Why this project ?
+
+While this let you authenticate this is a part of a bigger purpose,
+primary aim is to offer people a simple way to get out of Microsoft OneNote, because you regardless of what ms documentation states
+=> https://learn.microsoft.com/en-us/answers/questions/2276682/onenote-api-fails-with-large-sharepoint-document-l
+
+in essence you want to search for microsoft-onenote-list-notebook, microsoft-onenote-exporter
+
+
 ## Installation
 
 ```bash
@@ -21,7 +30,7 @@ npm install @msout/microsoft-onenote-list-notebooks
 ### List Notebooks
 
 ```bash
-onenote-list list --auth-file /path/to/auth.json [--notheadless] [--dodump]
+microsoft-onenote-list-notebooks list --auth-file /path/to/auth.json [--notheadless] [--dodump]
 ```
 
 ## Options
@@ -61,7 +70,7 @@ microsoft-onenote-list-notebooks list --auth-file /path/to/auth.json
 ## Project Structure
 
 ```
-microsoft-onenote-list-notebook/
+microsoft-onenote-list-notebooks/
 ├── src/
 │   ├── index.js         # CLI entry point
 │   ├── auth-context.js  # Auth context loader (no Electron code)
@@ -72,6 +81,7 @@ microsoft-onenote-list-notebook/
 ├── test/                # Jest tests
 ├── package.json
 |── .npmignore
+|── .gitignore
 └── README.md
 ```
 
