@@ -27,11 +27,9 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Configure npm auth
+      - name: Configure npm auth and publish
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          npm publish --provenance --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish to npm
-        run: npm publish --provenance --access public
