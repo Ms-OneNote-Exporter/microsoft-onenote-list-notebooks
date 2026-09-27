@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  onenote-list:
+    build: .
+    volumes:
+       - auth.json:auth.json:ro
+    #  - ../microsoft-onenote-exporter-docker/dckr_output_AF0577A7-FDB6-4B47-A4DA-1FEF8430C77B:/data/output:ro
+    # Use host network for better compatibility with Playwright
+    network_mode: host
+    command: list --auth-file /data/output/auth.json
