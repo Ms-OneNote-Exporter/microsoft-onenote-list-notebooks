@@ -4,7 +4,7 @@
   "description": "List Microsoft OneNote notebooks via Playwright - microsoft-webauth required to authenticate",
   "main": "src/index.js",
   "bin": {
-    "microsoft-onenote-list-notebooks": "./src/index.js"
+    "microsoft-onenote-list-notebooks": "src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",
