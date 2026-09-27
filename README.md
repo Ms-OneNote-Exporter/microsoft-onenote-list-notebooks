@@ -87,4 +87,4 @@ microsoft-onenote-list-notebooks/
 
 ## License
 
-ISC — same as MSOneNote Exporter.
+MIT — see [LICENSE](LICENSE), and read [NOTICE.md](NOTICE.md).
