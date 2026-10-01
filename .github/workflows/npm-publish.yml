@@ -22,4 +22,36 @@ jobs:
       - run: npm ci
       - run: npm run build --if-present
       - run: npm test
+
+      # The tarball is immutable and public forever, so it is audited before it
+      # leaves rather than after. This is belt-and-braces with
+      # test/publishedFiles.test.js, and deliberately not derived from
+      # package.json: this package uses .npmignore, not a `files` whitelist, so
+      # the manifest does not describe what ships and only the real packing does.
+      #
+      # It is here because 0.0.5 shipped with this step missing, and the .npmignore
+      # was narrow enough that the tarball carried test/, .github/, the Dockerfile,
+      # docker-compose.yml and jest.config.js - 20 files where 11 were needed.
+      - name: Verify the tarball carries no auth state or development files
+        run: |
+          PACK_JSON="$(mktemp)"
+          npm pack --dry-run --json > "$PACK_JSON"
+          node -e "
+            const fs = require('fs');
+            const files = JSON.parse(fs.readFileSync('$PACK_JSON', 'utf8'))[0].files.map(f => f.path);
+            const leaked = files.filter(f =>
+              /(^|\/)tests?\//.test(f) ||
+              /^\.github\//.test(f) ||
+              /(^|\/)(Dockerfile|compose\.ya?ml|entrypoint\.sh|\.dockerignore|jest\.config\.js|eslint\.config\.js)$/.test(f) ||
+              /auth.*\.json$/i.test(f) ||
+              /(^|\/)(logs?|output|dumps?|coverage)(\/|$)/i.test(f)
+            );
+            if (leaked.length) {
+              console.error('Refusing to publish, development files in tarball:', leaked);
+              process.exit(1);
+            }
+            console.log('Tarball is clean, ' + files.length + ' files');
+          "
+          rm -f "$PACK_JSON"
+
       - run: npm publish --access public --provenance
