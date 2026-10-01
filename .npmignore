@@ -1,6 +1,32 @@
 node_modules/
 *.tgz
 .env
+
+# Development and CI config. This package ships src/ and the three documents a
+# consumer needs; a test suite and a GitHub workflow are noise in a tarball, and
+# jest.config.js in particular tells a consumer nothing about the package.
+test/
+jest.config.js
+.github/
+Dockerfile
+docker-compose.yml
+entrypoint.sh
+.dockerignore
+start-container.sh
+
+# Local tooling
+logs
+output/
+dumps/
+diag-dumps/
+coverage/
+
+# Auth state must never ship: these hold live session cookies and MSAL tokens.
+# Mirrors the *auth*json rule in .gitignore so removing this file cannot leak
+# them, and is deliberately wider than .gitignore's auth.json because a consumer
+# can name the file anything.
+*auth*json
 auth.json
 auth-meta.json
-logs
+
+.DS_Store
