@@ -8,6 +8,7 @@
 const { program } = require('commander');
 const logger = require('./utils/logger');
 const { listNotebooks } = require('./list-notebooks');
+const { formatNotebookLine, isUsableUrl } = require('./utils/notebooks');
 
 program
     .name('onenote-list')
@@ -31,8 +32,12 @@ program
                 logger.warn('No notebook have been found.');
                 logger.warn('Remember: you can export a notebook by using the export command with the --notebook-link <url> option.');
             }
+            const linked = notebooks.filter(nb => isUsableUrl(nb.url)).length;
+            if (notebooks.length > 0 && linked < notebooks.length) {
+                logger.warn(`${notebooks.length - linked} of ${notebooks.length} notebooks have no direct link and must be opened in the browser.`);
+            }
             notebooks.forEach((nb, index) => {
-                logger.info(`${index + 1}. ${nb.name} (${nb.url})`);
+                logger.info(formatNotebookLine(nb, index));
             });
         } catch (e) {
             logger.error('Failed to list notebooks.', e);

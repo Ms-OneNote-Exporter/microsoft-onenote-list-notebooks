@@ -43,16 +43,22 @@ microsoft-onenote-list-notebooks list --auth-file /path/to/auth.json [--notheadl
 
 ## Output
 
-The command outputs a list of notebooks in the following format:
+The command outputs a list of notebooks, appending a link only for notebooks
+where one could be resolved from the page:
 ```
 Available Notebooks:
-1. My Notebook 1 (click-to-open)
-2. My Notebook 2 (click-to-open)
+1. My Notebook 1
+2. My Notebook 2 (https://onenote.cloud.microsoft/onenote/web/nb/2)
 ```
+
+OneNote renders notebook rows as click targets rather than links, so a direct URL
+is not always present. A notebook with no resolvable link is listed by name alone
+and counted in a warning above the list; it has to be opened in the browser.
 
 Each notebook object contains:
 - `name`: The display name of the notebook
-- `url`: Set to 'click-to-open' (no direct URL available in SPA)
+- `url`: The resolved absolute URL, or `'click-to-open'` when the row carried no
+  usable link. The sentinel is never printed.
 - `id`: The data-automationid attribute for potential precise targeting
 
 ## Authentication
@@ -77,7 +83,9 @@ microsoft-onenote-list-notebooks/
 │   ├── list-notebooks.js # Main listing logic
 │   ├── config.js        # Configuration (paths, URLs)
 │   └── utils/
-│       └── logger.js    # Logging utilities
+│       ├── logger.js     # Logging utilities
+│       ├── logPaths.js   # Log/dump directory resolution
+│       └── notebooks.js  # Listing presentation (URL resolution, rendering)
 ├── test/                # Jest tests
 ├── package.json
 |── .npmignore

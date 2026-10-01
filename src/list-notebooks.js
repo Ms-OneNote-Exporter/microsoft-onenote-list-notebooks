@@ -9,6 +9,80 @@ const { getAuthenticatedContextWithFile } = require('./auth-context');
 const { ONENOTE_URL } = require('./config');
 const fs = require('fs-extra');
 const path = require('path');
+const { PLACEHOLDER_URL, URL_DATA_ATTRIBUTES } = require('./utils/notebooks');
+
+/**
+ * Resolves the best available link for a notebook row.
+ *
+ * Serialised into the page by `toString()` on every scrape, so it cannot close
+ * over module scope or touch Node APIs. The placeholder and the attribute
+ * order are both passed in as arguments for the same reason: a single copy of
+ * each, owned by src/utils/notebooks.js.
+ *
+ * Attempted in order of reliability:
+ *
+ *   1. an `a[href]` on the row - the only form that is a real navigation
+ *   2. the OneNote table cell's own attributes
+ *   3. `data-*` attributes Microsoft uses to carry the link
+ *
+ * The DOM has no single stable answer here. A miss is the expected outcome,
+ * not a failure: the app renders notebook rows as click handlers, so the
+ * historical behaviour of every row is "no link". Returning null is correct
+ * for a miss, and the renderer then omits the URL rather than inventing one.
+ *
+ * @param {Element} row - Row element to inspect
+ * @param {string} pageUrl - Current page URL, for resolving relative hrefs
+ * @param {string} placeholder - Sentinel that means "no link"
+ * @param {string[]} attributes - Data attributes to try, in order
+ * @returns {string|null} Absolute URL, or null if none was found
+ */
+function resolveRowUrlInPage(row, pageUrl, placeholder, attributes) {
+    const absolute = (value) => {
+        if (typeof value !== 'string') {
+            return null;
+        }
+        const trimmed = value.trim();
+        if (trimmed === '' || trimmed === placeholder) {
+            return null;
+        }
+        if (/^(?:javascript:|mailto:|tel:|about:|#)/i.test(trimmed)) {
+            return null;
+        }
+        try {
+            return new URL(trimmed, pageUrl).href;
+        } catch (e) {
+            return null;
+        }
+    };
+
+    const readAttrs = (el) => {
+        for (const attr of attributes) {
+            const found = absolute(el.getAttribute(attr));
+            if (found) {
+                return found;
+            }
+        }
+        return null;
+    };
+
+    const anchor = row.querySelector('a[href]');
+    if (anchor) {
+        const fromAnchor = absolute(anchor.getAttribute('href'));
+        if (fromAnchor) {
+            return fromAnchor;
+        }
+    }
+
+    const cell = row.querySelector('td');
+    if (cell) {
+        const fromCell = readAttrs(cell);
+        if (fromCell) {
+            return fromCell;
+        }
+    }
+
+    return readAttrs(row);
+}
 
 /**
  * Detects the Microsoft Defender / MCAS "Use Edge Browser" interstitial
@@ -135,29 +209,44 @@ async function listNotebooks(options = {}) {
             for (let i = 0; i < maxRetries; i++) {
                 logger.debug(`Attempt ${i + 1}/${maxRetries} to scrape notebook list...`);
 
-                notebooks = await page.evaluate((imgSelector) => {
-                    const imgs = Array.from(document.querySelectorAll(imgSelector));
+                notebooks = await page.evaluate(
+                    ({ imgSelector, placeholder, attributes, resolveSrc }) => {
+                        // Re-injected rather than closed over: page.evaluate
+                        // serialises the callback, so an outer-scope
+                        // reference would be undefined in the page.
+                        const resolveRowUrl = new Function(`return (${resolveSrc})`)();
 
-                    return imgs.map((img, idx) => {
-                        const nameSpan = img.nextElementSibling;
-                        if (!nameSpan) return null;
+                        const imgs = Array.from(document.querySelectorAll(imgSelector));
+                        const pageUrl = window.location.href;
 
-                        const name = nameSpan.innerText.trim();
-                        if (!name) return null;
+                        return imgs.map((img, idx) => {
+                            const nameSpan = img.nextElementSibling;
+                            if (!nameSpan) return null;
 
-                        const tr = img.closest('tr');
-                        const trIndex = tr ? tr.rowIndex : idx;
+                            const name = nameSpan.innerText.trim();
+                            if (!name) return null;
 
-                        return {
-                            name,
-                            url: 'click-to-open',
-                            id: `notebook-row-${trIndex}`
-                        };
-                    }).filter(n => n && n.name);
-                }, NOTEBOOK_IMG_SELECTOR);
+                            const tr = img.closest('tr');
+                            const trIndex = tr ? tr.rowIndex : idx;
+
+                            return {
+                                name,
+                                url: resolveRowUrl(tr, pageUrl, placeholder, attributes) || placeholder,
+                                id: `notebook-row-${trIndex}`
+                            };
+                        }).filter(n => n && n.name);
+                    },
+                    {
+                        imgSelector: NOTEBOOK_IMG_SELECTOR,
+                        placeholder: PLACEHOLDER_URL,
+                        attributes: URL_DATA_ATTRIBUTES,
+                        resolveSrc: resolveRowUrlInPage.toString()
+                    }
+                );
 
                 if (notebooks.length > 0) {
-                    logger.success(`Found ${notebooks.length} notebooks!`);
+                    const withUrl = notebooks.filter(nb => nb.url !== PLACEHOLDER_URL).length;
+                    logger.success(`Found ${notebooks.length} notebooks (${withUrl} with a resolved link)!`);
                     break;
                 }
 
@@ -253,42 +342,69 @@ async function listNotebooks(options = {}) {
             }
 
             logger.info('Scraping notebooks from OneDrive list...');
-            notebooks = await targetPage.evaluate(() => {
-                const rows = Array.from(document.querySelectorAll('[role="row"]'));
-                return rows.map((row, idx) => {
-                    const nameBtn = row.querySelector('button[role="link"], button.nameCellTopContrast, button[class*="nameCellTop"]');
-                    if (!nameBtn) return null;
-                    const name = nameBtn.innerText.trim();
-                    if (!name) return null;
-                    return {
-                        name,
-                        url: 'click-to-open',
-                        id: `notebook-row-${idx}`
-                    };
-                }).filter(n => n && n.name);
-            });
+            notebooks = await targetPage.evaluate(
+                ({ placeholder, attributes, resolveSrc }) => {
+                    const resolveRowUrl = new Function(`return (${resolveSrc})`)();
 
-            logger.success(`Found ${notebooks.length} notebooks on OneDrive!`);
+                    const rows = Array.from(document.querySelectorAll('[role="row"]'));
+                    const pageUrl = window.location.href;
+
+                    return rows.map((row, idx) => {
+                        const nameBtn = row.querySelector('button[role="link"], button.nameCellTopContrast, button[class*="nameCellTop"]');
+                        if (!nameBtn) return null;
+                        const name = nameBtn.innerText.trim();
+                        if (!name) return null;
+                        return {
+                            name,
+                            // OneDrive rows hang the link off attributes and
+                            // the row's own anchor rather than a real href on
+                            // the name button, so the same resolver is reused.
+                            url: resolveRowUrl(row, pageUrl, placeholder, attributes) || placeholder,
+                            id: `notebook-row-${idx}`
+                        };
+                    }).filter(n => n && n.name);
+                },
+                {
+                    placeholder: PLACEHOLDER_URL,
+                    attributes: URL_DATA_ATTRIBUTES,
+                    resolveSrc: resolveRowUrlInPage.toString()
+                }
+            );
+
+            const oneDriveWithUrl = notebooks.filter(nb => nb.url !== PLACEHOLDER_URL).length;
+            logger.success(`Found ${notebooks.length} notebooks on OneDrive (${oneDriveWithUrl} with a resolved link)!`);
         } else {
             logger.warn('Neither notebook list nor "Show all notebooks" link was detected. Trying fallback scrape on main page...');
             const maxRetries = 3;
             for (let i = 0; i < maxRetries; i++) {
-                notebooks = await page.evaluate((imgSelector) => {
-                    const imgs = Array.from(document.querySelectorAll(imgSelector));
-                    return imgs.map((img, idx) => {
-                        const nameSpan = img.nextElementSibling;
-                        if (!nameSpan) return null;
-                        const name = nameSpan.innerText.trim();
-                        if (!name) return null;
-                        const tr = img.closest('tr');
-                        const trIndex = tr ? tr.rowIndex : idx;
-                        return {
-                            name,
-                            url: 'click-to-open',
-                            id: `notebook-row-${trIndex}`
-                        };
-                    }).filter(n => n && n.name);
-                }, NOTEBOOK_IMG_SELECTOR);
+                notebooks = await page.evaluate(
+                    ({ imgSelector, placeholder, attributes, resolveSrc }) => {
+                        const resolveRowUrl = new Function(`return (${resolveSrc})`)();
+
+                        const imgs = Array.from(document.querySelectorAll(imgSelector));
+                        const pageUrl = window.location.href;
+
+                        return imgs.map((img, idx) => {
+                            const nameSpan = img.nextElementSibling;
+                            if (!nameSpan) return null;
+                            const name = nameSpan.innerText.trim();
+                            if (!name) return null;
+                            const tr = img.closest('tr');
+                            const trIndex = tr ? tr.rowIndex : idx;
+                            return {
+                                name,
+                                url: resolveRowUrl(tr, pageUrl, placeholder, attributes) || placeholder,
+                                id: `notebook-row-${trIndex}`
+                            };
+                        }).filter(n => n && n.name);
+                    },
+                    {
+                        imgSelector: NOTEBOOK_IMG_SELECTOR,
+                        placeholder: PLACEHOLDER_URL,
+                        attributes: URL_DATA_ATTRIBUTES,
+                        resolveSrc: resolveRowUrlInPage.toString()
+                    }
+                );
 
                 if (notebooks.length > 0) {
                     logger.success(`Found ${notebooks.length} notebooks!`);
