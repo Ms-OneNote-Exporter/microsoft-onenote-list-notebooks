@@ -123,10 +123,165 @@ function formatNotebookLine(notebook, index) {
     return `${index + 1}. ${notebook.name}${suffix}`;
 }
 
+/**
+ * Builds a title -> URL index from the Office substrate MRU payload.
+ *
+ * The OneNote web app does not put notebook links in the DOM. A row is a
+ * `<tr tabindex="0">` with no `href` and no `data-*` attribute; the app renders
+ * it as a click target and the URL lives in the MRU feed the page fetches from
+ * substrate.office.com. So the link is read off the wire and matched back to the
+ * scraped rows by title.
+ *
+ * Matching is on the normalised title because the payload and the DOM can
+ * differ in surrounding whitespace and case. A title that appears twice keeps
+ * its first entry, which matches the order the listing itself shows.
+ *
+ * The URL is rebuilt in canonical form via canonicalNotebookUrl, falling back to
+ * the feed's own links when an entry is too thin to rebuild from. The canonical
+ * form is preferred because it is the one OneNote itself produces and the one
+ * that stays put in the address bar rather than redirecting.
+ *
+ * @param {{files?: Array<Object>}} payload - Parsed MRU response
+ * @returns {Map<string, string>} Lowercased title -> absolute notebook URL
+ */
+function indexNotebookUrls(payload) {
+    const index = new Map();
+    const files = (payload && payload.files) || [];
+
+    for (const file of files) {
+        const title = typeof (file && file.title) === 'string' ? file.title : null;
+        if (!title) continue;
+
+        const key = notebookKey(title);
+        if (!key || index.has(key)) continue;
+
+        const url = canonicalNotebookUrl(file) ||
+            normalizeUrl(file.web_url) ||
+            normalizeUrl(file.url);
+        if (url) {
+            index.set(key, url);
+        }
+    }
+
+    return index;
+}
+
+/**
+ * Normalises a notebook title for matching.
+ *
+ * Shared with indexNotebookUrls so the index key and the lookup key are built
+ * the same way; a divergence here would silently match nothing.
+ *
+ * @param {string} title - Notebook title
+ * @returns {string} Normalised key
+ */
+function notebookKey(title) {
+    return String(title == null ? '' : title).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Host used for consumer OneNote notebooks.
+ *
+ * A consumer account's site_path is on my.microsoftpersonalcontent.com, which
+ * works, but the canonical form that OneNote itself produces - and that people
+ * copy out of the address bar - is on onedrive.live.com. Same site, different
+ * host alias, so this is a rewrite rather than a different target.
+ *
+ * @type {string}
+ */
+const CONSUMER_HOST_REWRITES = [
+    [/^https?:\/\/[^/]*\.microsoftpersonalcontent\.com/i, 'https://onedrive.live.com']
+];
+
+/**
+ * Builds the canonical SharePoint URL for a notebook.
+ *
+ * OneNote hands out this form when you click through to a notebook:
+ *
+ *     .../\_layouts/15/Doc.aspx?sourcedoc={GUID}&action=edit&wdorigin=NavigationUrl
+ *
+ * The MRU feed's own `url` and `web_url` are the pre-navigation forms
+ * (`resid=` on consumer, `file=...&mobileredirect=true&wdorigin=Sharepoint` on
+ * business). They open the right notebook but are not the shape a user would
+ * recognise, and they redirect on load. Rebuilding from the site path and the
+ * `sourcedoc` GUID produces the canonical form directly, which also means the
+ * printed link survives being pasted into the sibling exporter's
+ * `--notebook-link` and stays put in the address bar.
+ *
+ * `wd=target(...)`, which OneNote adds to deep-link a specific page inside the
+ * notebook, is deliberately not reproduced: the feed carries no page id, and a
+ * link to the notebook itself is what `--notebook-link` means.
+ *
+ * @param {Object} file - One entry from the MRU feed
+ * @returns {string|null} Canonical URL, or null if the entry lacks the fields
+ */
+function canonicalNotebookUrl(file) {
+    if (!file) {
+        return null;
+    }
+
+    // The GUID is sharepoint_info.unique_id on both account types. The feed's
+    // own links are the fallback, since some older entries omit it.
+    const guid = (file.sharepoint_info && file.sharepoint_info.unique_id) ||
+        guidFromUrl(file.web_url) || guidFromUrl(file.url);
+    if (!guid) {
+        return null;
+    }
+
+    const base = siteBase(file);
+    if (!base) {
+        return null;
+    }
+
+    return `${base}/_layouts/15/Doc.aspx?sourcedoc={${guid}}&action=edit&wdorigin=NavigationUrl`;
+}
+
+/**
+ * Extracts a notebook GUID from a feed URL.
+ *
+ * Handles both encodings: `sourcedoc=%7BGUID%7D` on business accounts and
+ * `resid=GUID` on consumer ones.
+ *
+ * @param {string} url - A feed URL
+ * @returns {string|null} The GUID, or null
+ */
+function guidFromUrl(url) {
+    const match = String(url || '').match(/[?&](?:sourcedoc|resid)=(?:%7B|\{)?([^&}%]+)/i);
+    return match ? match[1] : null;
+}
+
+/**
+ * Resolves the site root a notebook lives under.
+ *
+ * Taken from web_url where possible, because that already carries the right host
+ * for the account type; sharepoint_info.site_path is the fallback.
+ *
+ * @param {Object} file - One entry from the MRU feed
+ * @returns {string|null} Site root without a trailing slash, or null
+ */
+function siteBase(file) {
+    const fromWebUrl = String((file && file.web_url) || '').split('/_layouts/')[0];
+    let base = normalizeUrl(fromWebUrl) || normalizeUrl(file && file.sharepoint_info && file.sharepoint_info.site_path);
+
+    if (!base) {
+        return null;
+    }
+
+    for (const [pattern, replacement] of CONSUMER_HOST_REWRITES) {
+        base = base.replace(pattern, replacement);
+    }
+
+    return base.replace(/\/+$/, '');
+}
+
 module.exports = {
     PLACEHOLDER_URL,
     URL_DATA_ATTRIBUTES,
     isUsableUrl,
     normalizeUrl,
+    notebookKey,
+    indexNotebookUrls,
+    canonicalNotebookUrl,
+    guidFromUrl,
     formatNotebookLine
 };
