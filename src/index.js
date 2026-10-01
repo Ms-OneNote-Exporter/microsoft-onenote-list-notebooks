@@ -12,7 +12,10 @@ const { listNotebooks } = require('./list-notebooks');
 program
     .name('onenote-list')
     .description('List Microsoft OneNote notebooks via Playwright — extracted from MSOneNote Exporter')
-    .version('1.0.0');
+    // Single source of truth: a hardcoded version drifts from package.json and
+    // makes `--version` report a release that does not exist. It did - it said
+    // 1.0.0 while the published version was 0.0.5.
+    .version(require('../package.json').version);
 
 program
     .command('list')
@@ -33,6 +36,14 @@ program
             });
         } catch (e) {
             logger.error('Failed to list notebooks.', e);
+            // The exit code is set rather than the process ended, so anything
+            // already written or flushed still gets out. Without this the CLI
+            // reported success on a hard failure: `list --auth-file
+            // /nonexistent.json` printed the error and exited 0, which in a
+            // container or a CI step is a failed listing that looks like a
+            // passing one. microsoft-onenote-export-notebook has always exited
+            // non-zero here; this brings the two into line.
+            process.exitCode = 1;
         }
     });
 
