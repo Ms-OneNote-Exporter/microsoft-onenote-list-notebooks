@@ -2,7 +2,12 @@
   "name": "@msout/microsoft-onenote-list-notebooks",
   "version": "0.0.5",
   "description": "List Microsoft OneNote notebooks via Playwright - microsoft-webauth required to authenticate",
-  "main": "src/index.js",
+  "main": "src/list-notebooks.js",
+  "exports": {
+    ".": "./src/list-notebooks.js",
+    "./cli": "./src/index.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "microsoft-onenote-list-notebooks": "src/index.js"
   },

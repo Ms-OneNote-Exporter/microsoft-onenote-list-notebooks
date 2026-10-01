@@ -1,0 +1,53 @@
+name: Tests
+
+# This repo had no test workflow at all: npm-publish.yml runs `npm test`, but
+# only on a v* tag, which is the worst possible moment to discover a regression
+# because the failing commit is already on npm. That is the likeliest reason
+# 0.0.5 was the last release and the last meaningful change to this package
+# arrived in September. This runs the suite on every pull request and every push
+# to main, so a branch is gated before review rather than after release.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          # Same rationale as the sibling repos: no caching. A cached
+          # node_modules tree or browser is a stale-artifact source.
+          package-manager-cache: false
+
+      - run: npm ci
+
+      # `npm ci` does not fetch a browser — the playwright package has no
+      # postinstall script. This step is load-bearing, not a convenience. The
+      # suite is small today, but listNotebooks launches a real browser for the
+      # live path, so a checkout without chromium should not be able to report
+      # green having skipped everything that matters.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - run: npm test
+
+      # Guards against a broken bin entry, since `exports` now decides what
+      # consumers can import and the CLI is only reachable through `bin`.
+      - name: Smoke test the CLI
+        run: |
+          node src/index.js --version
+          node src/index.js --help
+          # A missing auth file must fail loudly rather than launching a browser.
+          if node src/index.js list --auth-file /nonexistent.json; then
+            echo "::error::list with a nonexistent auth file should exit non-zero"
+            exit 1
+          fi
