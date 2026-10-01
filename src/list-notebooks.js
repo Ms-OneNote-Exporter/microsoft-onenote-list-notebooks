@@ -9,7 +9,22 @@ const { getAuthenticatedContextWithFile } = require('./auth-context');
 const { ONENOTE_URL } = require('./config');
 const fs = require('fs-extra');
 const path = require('path');
-const { PLACEHOLDER_URL, URL_DATA_ATTRIBUTES } = require('./utils/notebooks');
+const {
+    PLACEHOLDER_URL,
+    URL_DATA_ATTRIBUTES,
+    notebookKey,
+    indexNotebookUrls
+} = require('./utils/notebooks');
+
+/**
+ * Matches the Office substrate MRU feed the OneNote page loads its notebook
+ * list from. Anchored on the path rather than the full URL because the host
+ * varies (`substrate.office.com`, and regionally suffixed variants) and the
+ * query string is not part of the identity of the request.
+ *
+ * @type {RegExp}
+ */
+const SUBSTRATE_MRU_RE = /substrate\.office\.com\/recommended\/api\/[^?]*\/(?:recent|favorites)\b/i;
 
 /**
  * Resolves the best available link for a notebook row.
@@ -153,7 +168,35 @@ async function listNotebooks(options = {}) {
     logger.debug(`Launching browser (headless: ${headless})...`);
 
     const { browser, context } = await getAuthenticatedContextWithFile(options.authFile, headless);
-    
+
+    // The notebook rows carry no link in the DOM, so the URL is read off the
+    // MRU feed the page fetches while it loads. This has to be attached before
+    // the first goto, or the response is already gone by the time anyone is
+    // listening for it. Populated for every page in the context, because the
+    // OneDrive fallback path renders in a popup.
+    const notebookUrls = new Map();
+    const onMruResponse = (response) => {
+        if (!SUBSTRATE_MRU_RE.test(response.url())) {
+            return;
+        }
+        // Body reads are async and the response may already be gone; a failed
+        // read must not take the listing down with it.
+        response.text()
+            .then((body) => {
+                const entries = indexNotebookUrls(JSON.parse(body));
+                if (entries.size > 0) {
+                    notebookUrls.clear();
+                    for (const [key, url] of entries) {
+                        notebookUrls.set(key, url);
+                    }
+                }
+            })
+            .catch((e) => {
+                logger.debug(`Could not read the MRU feed for notebook links: ${e.message}`);
+            });
+    };
+    context.on('response', onMruResponse);
+
     try {
         const page = await context.newPage();
 
@@ -245,8 +288,10 @@ async function listNotebooks(options = {}) {
                 );
 
                 if (notebooks.length > 0) {
-                    const withUrl = notebooks.filter(nb => nb.url !== PLACEHOLDER_URL).length;
-                    logger.success(`Found ${notebooks.length} notebooks (${withUrl} with a resolved link)!`);
+                    // Link counts are reported after the MRU merge, not here:
+                    // at this point the rows have not been matched to the feed
+                    // yet, so any number printed now would be misleading.
+                    logger.success(`Found ${notebooks.length} notebooks!`);
                     break;
                 }
 
@@ -371,8 +416,7 @@ async function listNotebooks(options = {}) {
                 }
             );
 
-            const oneDriveWithUrl = notebooks.filter(nb => nb.url !== PLACEHOLDER_URL).length;
-            logger.success(`Found ${notebooks.length} notebooks on OneDrive (${oneDriveWithUrl} with a resolved link)!`);
+            logger.success(`Found ${notebooks.length} notebooks on OneDrive!`);
         } else {
             logger.warn('Neither notebook list nor "Show all notebooks" link was detected. Trying fallback scrape on main page...');
             const maxRetries = 3;
@@ -426,12 +470,33 @@ async function listNotebooks(options = {}) {
             }
         }
 
+        // A link scraped out of the DOM is preferred, but rows normally have
+        // none, so fall back to the MRU feed. A row that still has no link keeps
+        // the placeholder; the renderer omits it rather than printing it.
+        if (notebookUrls.size > 0) {
+            logger.debug(`Matched notebook links from the MRU feed: ${notebookUrls.size} entries.`);
+        }
+        for (const nb of uniqueNotebooks) {
+            if (nb.url === PLACEHOLDER_URL) {
+                const fromFeed = notebookUrls.get(notebookKey(nb.name));
+                if (fromFeed) {
+                    nb.url = fromFeed;
+                }
+            }
+        }
+
+        const linked = uniqueNotebooks.filter(nb => nb.url !== PLACEHOLDER_URL).length;
+        logger.debug(`${linked} of ${uniqueNotebooks.length} notebooks resolved to a link.`);
+
         return uniqueNotebooks;
 
     } catch (e) {
         logger.error('Error listing notebooks:', e);
         throw e;
     } finally {
+        // Detach before closing, so a late response cannot try to log into a
+        // context that is on its way out.
+        context.off('response', onMruResponse);
         await browser.close();
     }
 }
