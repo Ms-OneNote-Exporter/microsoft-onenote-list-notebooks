@@ -21,6 +21,12 @@ dumps/
 diag-dumps/
 coverage/
 
+# .gitignore covers .qwen for git, but nothing covered it for npm: .gitignore and
+# .npmignore are separate lists, and a developer's agent config was on its way
+# into the 0.0.7 tarball. It is a permissions file for whoever happens to unpack
+# this, which is the opposite of what a published package should carry.
+.qwen/
+
 # Auth state must never ship: these hold live session cookies and MSAL tokens.
 # Mirrors the *auth*json rule in .gitignore so removing this file cannot leak
 # them, and is deliberately wider than .gitignore's auth.json because a consumer

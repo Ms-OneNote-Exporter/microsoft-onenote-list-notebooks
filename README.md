@@ -96,18 +96,19 @@ microsoft-onenote-list-notebooks list --auth-file /path/to/auth.json
 ```
 microsoft-onenote-list-notebooks/
 ├── src/
-│   ├── index.js         # CLI entry point
-│   ├── auth-context.js  # Auth context loader (no Electron code)
-│   ├── list-notebooks.js # Main listing logic
-│   ├── config.js        # Configuration (paths, URLs)
+│   ├── index.js           # CLI entry point
+│   ├── auth-context.js    # Auth context loader (no Electron code)
+│   ├── list-notebooks.js  # Main listing logic
+│   ├── config.js          # Configuration (paths, URLs)
+│   ├── diagnose-new-page.js # Interactive page-diagnosis helper
 │   └── utils/
-│       ├── logger.js     # Logging utilities
-│       ├── logPaths.js   # Log/dump directory resolution
-│       └── notebooks.js  # Listing presentation (URL resolution, rendering)
-├── test/                # Jest tests
+│       ├── logger.js      # Logging utilities
+│       ├── logPaths.js    # Log/dump directory resolution
+│       └── notebooks.js   # Listing presentation (URL resolution, rendering)
+├── test/                  # Jest tests (not published)
 ├── package.json
-|── .npmignore
-|── .gitignore
+├── .npmignore
+├── .gitignore
 └── README.md
 ```
 

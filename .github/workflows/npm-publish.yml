@@ -7,7 +7,7 @@ on:
 
 permissions:
   id-token: write  # Required for OIDC
-  contents: read
+  contents: write  # Required to create the GitHub Release below
 
 jobs:
   publish:
@@ -22,6 +22,28 @@ jobs:
       - run: npm ci
       - run: npm run build --if-present
       - run: npm test
+
+      # A tag that disagrees with package.json fails at `npm publish` with
+      # "you cannot publish over the previously published versions: 0.0.1" -
+      # which names a version nobody in this workflow mentioned, because the real
+      # fault is that the tag points at the wrong commit. That is exactly what a
+      # stale v0.0.6 tag did here: it named 0.0.6 while resolving to the commit
+      # published as 0.0.1.
+      #
+      # Both facts are known before publishing starts, so compare them and say so.
+      # A version can only be published once, so this is the last cheap moment to
+      # notice that the tag was cut from the wrong place.
+      - name: Refuse to publish a tag that disagrees with package.json
+        env:
+          TAG_VERSION: ${{ github.ref_name }}
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "v$PKG_VERSION" ]; then
+            echo "::error::tag $TAG_VERSION does not match package.json version $PKG_VERSION"
+            echo "::error::the tag is cut from the wrong commit - retag the version bump, or fix package.json"
+            exit 1
+          fi
+          echo "Tag $TAG_VERSION matches package.json"
 
       # The tarball is immutable and public forever, so it is audited before it
       # leaves rather than after. This is belt-and-braces with
@@ -44,6 +66,7 @@ jobs:
               /^\.github\//.test(f) ||
               /(^|\/)(Dockerfile|compose\.ya?ml|entrypoint\.sh|\.dockerignore|jest\.config\.js|eslint\.config\.js)$/.test(f) ||
               /auth.*\.json$/i.test(f) ||
+              /^\.qwen\//.test(f) ||
               /(^|\/)(logs?|output|dumps?|coverage)(\/|$)/i.test(f)
             );
             if (leaked.length) {
@@ -55,3 +78,29 @@ jobs:
           rm -f "$PACK_JSON"
 
       - run: npm publish --access public --provenance
+
+      # The registry and the GitHub Releases panel were kept in sync by hand, and
+      # the hand lost: v0.0.2 through v0.0.6 all reached npm, and no Release
+      # exists for any of them, so the repo's Releases panel still read v0.0.1
+      # with a "Latest" badge on a three-month-old build while npm served 0.0.6.
+      # The tag is the one event that means "this version shipped", so it creates
+      # the Release itself and there is no second step left to forget.
+      #
+      # This runs after npm publish on purpose: a Release must never advertise a
+      # version the registry does not have. It also means a failure here leaves a
+      # red run with the package already published, which is why it runs last.
+      #
+      # --verify-tag re-checks the tag against the remote, so a Release cannot be
+      # created for a ref that was never pushed. GITHUB_TOKEN is enough and needs
+      # no extra secret; the cost is that this Release will not itself trigger
+      # workflows on the `release` event, and this repo has none.
+      - name: Create the GitHub release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes

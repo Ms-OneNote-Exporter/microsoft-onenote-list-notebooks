@@ -46,6 +46,10 @@ const FORBIDDEN_PATTERNS = [
     { re: /^logs?\//, why: 'runtime logs' },
     { re: /^output\//, why: 'export output' },
     { re: /dumps?/, why: 'HTML debug dumps' },
+    // .gitignore already hides .qwen from git, which is exactly why it was
+    // invisible here: an untracked directory that npm has no reason to skip is
+    // still packed. One developer's agent permissions file reached npm pack.
+    { re: /^\.qwen\//, why: 'local agent config' },
 ];
 
 describe('published files', () => {
