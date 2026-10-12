@@ -8,11 +8,25 @@ const fs = require('fs-extra');
 const path = require('path');
 const { resolveLogDir } = require('./logPaths');
 
+/**
+ * What this logger's own paths are rewritten to before a line leaves for a sink.
+ *
+ * Defence in depth, with the basis stated: today no `logger.*` call in this
+ * package emits a path — `getDumpDisplayPath()` is the only one that can, and it
+ * fires under `options.dodump`, which the CLI never sets. The redaction is here so
+ * that a future line which does name the log root cannot ship a home directory
+ * or an install path to a caller that is broadcasting it to a browser.
+ */
+const REDACTED_LOG_DIR = '<log-dir>';
+const REDACTED_DUMP_DIR = '<log-dir>/dumps';
+const REDACTED_DUMP_SUB_DIR = '<dump-dir>';
+
 class Logger {
     constructor() {
         this.months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         this.logDir = resolveLogDir();
         this.logFilePath = path.join(this.logDir, 'app.log');
+        this._sink = null;
         
          // Initialize dump directory name once per execution
         const now = new Date();
@@ -157,7 +171,100 @@ class Logger {
         // brings that down to owner-only on the next run.
         fs.appendFileSync(this.logFilePath, plainMessage + '\n', { mode: 0o600 });
 
+         // Notify the sink *after* the append and before the return, so a sink
+        // that throws cannot cost this the app.log line. It is handed the raw
+        // `message`, never `formattedMessage`: that one carries a chalk-coloured
+        // timestamp, and a consumer broadcasting the line has its own clock.
+        // `logger.error`'s error-stack branch deliberately does not come through
+        // here - it writes to the file directly - so a stack never reaches a sink.
+        this._toSink(level, message);
+
         return formattedMessage;
+    }
+
+    /**
+     * Registers a sink for every emitted line, as `({level, message})`.
+     *
+     * **This is how `listNotebooks`' `listing-log` event gets its lines.** The
+     * listing logs from a dozen places - the browser launch, the two load waits,
+     * the five-attempt scrape loop, the MCAS interstitial, the OneDrive fallback -
+     * and threading an emitter through each of them would be a wide change that
+     * rots the first time someone adds a `logger.info` and forgets. Tapping the
+     * logger is one hook.
+     *
+     * The sink lives on a module singleton, so it has to be explicitly removed:
+     * `setSink(null)` is what `listNotebooks`' `finally` calls, and without it a
+     * sink left behind would forward *this* run's lines to whatever observer ran
+     * next.
+     *
+     * @param {((entry: {level: string, message: unknown}) => void)|null} sink
+     */
+    setSink(sink) {
+        this._sink = typeof sink === 'function' ? sink : null;
+    }
+
+    /**
+     * This logger's own paths, longest first.
+     *
+     * Both *forms* of the dump path are listed, not just the absolute one, because
+     * a line carries whichever the caller had: `getDumpDisplayPath()` hands out a
+     * path relative to the cwd, so redacting only `this.logDir` would leave the
+     * dump subdir - a run's date and time - sitting in the middle of it. The bare
+     * subdir is listed last, which catches any rendering of it the two paths above
+     * do not cover.
+     *
+     * Longest first throughout, because each of these *contains* the next: in any
+     * other order the shorter rewrite would already have mangled the longer string
+     * and its own rule would never match.
+     *
+     * `getDumpDisplayPath()` returns `'.'` when the dump dir is the cwd, and
+     * replacing that would blank out every full stop in the line - so an empty or
+     * `.` path is not a secret and is skipped.
+     *
+     * @returns {Array<[string, string]>} [value, placeholder] pairs
+     */
+    _ownPaths() {
+        const candidates = [
+            [path.join(this.logDir, 'dumps', this.dumpSubDir), REDACTED_DUMP_DIR],
+            [this.getDumpDisplayPath(), REDACTED_DUMP_DIR],
+            [this.logDir, REDACTED_LOG_DIR],
+            [this.dumpSubDir, REDACTED_DUMP_SUB_DIR]
+        ];
+        return candidates.filter(([value]) => value && value !== '.');
+    }
+
+    /** Rewrites this logger's own paths out of a line bound for a sink. */
+    _redactOwnPaths(message) {
+        if (typeof message !== 'string') {
+            return message;
+        }
+        let redacted = message;
+        for (const [value, placeholder] of this._ownPaths()) {
+            if (value) {
+                redacted = redacted.split(value).join(placeholder);
+            }
+        }
+        return redacted;
+    }
+
+    /**
+     * Forwards one message to the sink, if there is one.
+     *
+     * A sink that throws is swallowed. It is an observer, and an observer's bug
+     * must never cost someone the listing it is watching - and the line has
+     * already been appended to app.log by the time this runs.
+     */
+    _toSink(level, message) {
+        if (!this._sink) return;
+        try {
+            this._sink({ level, message: this._redactOwnPaths(message) });
+        } catch (e) {
+            // process.stderr, not this logger: reporting a sink failure through
+            // the logger whose sink just failed is a re-entrant loop.
+            process.stderr.write(
+                `[WARN] log sink threw; ignoring. ${e && e.message ? e.message : e}\n`
+            );
+        }
     }
 
     /** Generic log method for programmatic use */
